@@ -84,6 +84,10 @@ struct FieldAccess {
 #ifdef V8_HEAP_SANDBOX
   ExternalPointerTag external_pointer_tag = kExternalPointerNullTag;
 #endif
+  bool maybe_initializing_or_transitioning_store;  // store is potentially
+                                                   // initializing a newly
+                                                   // allocated object or part
+                                                   // of a map transition.
 
   FieldAccess()
       : base_is_tagged(kTaggedBase),
@@ -92,18 +96,18 @@ struct FieldAccess {
         machine_type(MachineType::None()),
         write_barrier_kind(kFullWriteBarrier),
         const_field_info(ConstFieldInfo::None()),
-        is_store_in_literal(false) {}
+        is_store_in_literal(false),
+        maybe_initializing_or_transitioning_store(false) {}
 
   FieldAccess(BaseTaggedness base_is_tagged, int offset, MaybeHandle<Name> name,
               MaybeHandle<Map> map, Type type, MachineType machine_type,
               WriteBarrierKind write_barrier_kind,
               ConstFieldInfo const_field_info = ConstFieldInfo::None(),
-              bool is_store_in_literal = false
+              bool is_store_in_literal = false,
 #ifdef V8_HEAP_SANDBOX
-              ,
-              ExternalPointerTag external_pointer_tag = kExternalPointerNullTag
+              ExternalPointerTag external_pointer_tag = kExternalPointerNullTag,
 #endif
-              )
+              bool maybe_initializing_or_transitioning_store = false)
       : base_is_tagged(base_is_tagged),
         offset(offset),
         name(name),
@@ -112,12 +116,12 @@ struct FieldAccess {
         machine_type(machine_type),
         write_barrier_kind(write_barrier_kind),
         const_field_info(const_field_info),
-        is_store_in_literal(is_store_in_literal)
+        is_store_in_literal(is_store_in_literal),
 #ifdef V8_HEAP_SANDBOX
-        ,
-        external_pointer_tag(external_pointer_tag)
+        external_pointer_tag(external_pointer_tag),
 #endif
-  {
+        maybe_initializing_or_transitioning_store(
+            maybe_initializing_or_transitioning_store) {
     DCHECK_GE(offset, 0);
     DCHECK_IMPLIES(
         machine_type.IsMapWord(),
@@ -594,9 +598,9 @@ bool operator==(NumberOperationParameters const&,
 const NumberOperationParameters& NumberOperationParametersOf(const Operator* op)
     V8_WARN_UNUSED_RESULT;
 
-class SpeculativeBigIntAsUintNParameters {
+class SpeculativeBigIntAsNParameters {
  public:
-  SpeculativeBigIntAsUintNParameters(int bits, const FeedbackSource& feedback)
+  SpeculativeBigIntAsNParameters(int bits, const FeedbackSource& feedback)
       : bits_(bits), feedback_(feedback) {
     DCHECK_GE(bits_, 0);
     DCHECK_LE(bits_, 64);
@@ -610,12 +614,12 @@ class SpeculativeBigIntAsUintNParameters {
   FeedbackSource feedback_;
 };
 
-size_t hash_value(SpeculativeBigIntAsUintNParameters const&);
+size_t hash_value(SpeculativeBigIntAsNParameters const&);
 V8_EXPORT_PRIVATE std::ostream& operator<<(
-    std::ostream&, const SpeculativeBigIntAsUintNParameters&);
-bool operator==(SpeculativeBigIntAsUintNParameters const&,
-                SpeculativeBigIntAsUintNParameters const&);
-const SpeculativeBigIntAsUintNParameters& SpeculativeBigIntAsUintNParametersOf(
+    std::ostream&, const SpeculativeBigIntAsNParameters&);
+bool operator==(SpeculativeBigIntAsNParameters const&,
+                SpeculativeBigIntAsNParameters const&);
+const SpeculativeBigIntAsNParameters& SpeculativeBigIntAsNParametersOf(
     const Operator* op) V8_WARN_UNUSED_RESULT;
 
 int FormalParameterCountOf(const Operator* op) V8_WARN_UNUSED_RESULT;
@@ -840,6 +844,8 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* SpeculativeBigIntAdd(BigIntOperationHint hint);
   const Operator* SpeculativeBigIntSubtract(BigIntOperationHint hint);
   const Operator* SpeculativeBigIntNegate(BigIntOperationHint hint);
+  const Operator* SpeculativeBigIntAsIntN(int bits,
+                                          const FeedbackSource& feedback);
   const Operator* SpeculativeBigIntAsUintN(int bits,
                                            const FeedbackSource& feedback);
 
@@ -907,7 +913,8 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
   const Operator* ChangeFloat64ToTaggedPointer();
   const Operator* ChangeTaggedToBit();
   const Operator* ChangeBitToTagged();
-  const Operator* TruncateBigIntToUint64();
+  const Operator* TruncateBigIntToWord64();
+  const Operator* ChangeInt64ToBigInt();
   const Operator* ChangeUint64ToBigInt();
   const Operator* TruncateTaggedToWord32();
   const Operator* TruncateTaggedToFloat64();
@@ -1040,7 +1047,8 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
 
   const Operator* LoadFieldByIndex();
   const Operator* LoadField(FieldAccess const&);
-  const Operator* StoreField(FieldAccess const&);
+  const Operator* StoreField(FieldAccess const&,
+                             bool maybe_initializing_or_transitioning = true);
 
   // load-element [base + index]
   const Operator* LoadElement(ElementAccess const&);
@@ -1065,10 +1073,22 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorBuilder final
                                                      Type value_type);
 
   // load-from-object [base + offset]
+  // This operator comes in two flavors: LoadImmutableFromObject guarantees that
+  // the underlying object field will be initialized at most once for the
+  // duration of the program. This enables more optimizations in
+  // CsaLoadElimination.
+  // Note: LoadImmutableFromObject is unrelated to LoadImmutable and is lowered
+  // into a regular Load.
   const Operator* LoadFromObject(ObjectAccess const&);
+  const Operator* LoadImmutableFromObject(ObjectAccess const&);
 
   // store-to-object [base + offset], value
+  // This operator comes in two flavors: InitializeImmutableInObject guarantees
+  // that the underlying object field has not and will not be initialized again
+  // for the duration of the program. This enables more optimizations in
+  // CsaLoadElimination.
   const Operator* StoreToObject(ObjectAccess const&);
+  const Operator* InitializeImmutableInObject(ObjectAccess const&);
 
   // load-typed-element buffer, [base + external + index]
   const Operator* LoadTypedElement(ExternalArrayType const&);

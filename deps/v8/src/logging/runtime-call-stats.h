@@ -245,7 +245,7 @@ class RuntimeCallTimer final {
   V(RegExp_Exec)                                           \
   V(RegExp_New)                                            \
   V(ScriptCompiler_Compile)                                \
-  V(ScriptCompiler_CompileFunctionInContext)               \
+  V(ScriptCompiler_CompileFunction)                        \
   V(ScriptCompiler_CompileUnbound)                         \
   V(Script_Run)                                            \
   V(Set_Add)                                               \
@@ -314,6 +314,7 @@ class RuntimeCallTimer final {
   ADD_THREAD_SPECIFIC_COUNTER(V, Compile, RewriteReturnResult)              \
   ADD_THREAD_SPECIFIC_COUNTER(V, Compile, ScopeAnalysis)                    \
   ADD_THREAD_SPECIFIC_COUNTER(V, Compile, Script)                           \
+  ADD_THREAD_SPECIFIC_COUNTER(V, Compile, CompileTask)                      \
                                                                             \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, AllocateFPRegisters)             \
   ADD_THREAD_SPECIFIC_COUNTER(V, Optimize, AllocateGeneralRegisters)        \
@@ -388,8 +389,10 @@ class RuntimeCallTimer final {
   V(BoundFunctionLengthGetter)                 \
   V(BoundFunctionNameGetter)                   \
   V(CodeGenerationFromStringsCallbacks)        \
-  V(CompileBackgroundCompileTask)              \
+  V(CompileBackgroundBaselinePreVisit)         \
+  V(CompileBackgroundBaselineVisit)            \
   V(CompileBaseline)                           \
+  V(CompileBaselineFinalization)               \
   V(CompileBaselinePreVisit)                   \
   V(CompileBaselineVisit)                      \
   V(CompileCollectSourcePositions)             \
@@ -466,6 +469,7 @@ class RuntimeCallTimer final {
   V(PrototypeMap_TransitionToDataProperty)     \
   V(PrototypeObject_DeleteProperty)            \
   V(ReconfigureToDataProperty)                 \
+  V(SnapshotDecompress)                        \
   V(StringLengthGetter)                        \
   V(TestCounter1)                              \
   V(TestCounter2)                              \
@@ -473,10 +477,10 @@ class RuntimeCallTimer final {
   V(UpdateProtector)                           \
   V(WebSnapshotDeserialize)                    \
   V(WebSnapshotDeserialize_Arrays)             \
+  V(WebSnapshotDeserialize_Classes)            \
   V(WebSnapshotDeserialize_Contexts)           \
   V(WebSnapshotDeserialize_Exports)            \
   V(WebSnapshotDeserialize_Functions)          \
-  V(WebSnapshotDeserialize_Classes)            \
   V(WebSnapshotDeserialize_Maps)               \
   V(WebSnapshotDeserialize_Objects)            \
   V(WebSnapshotDeserialize_Strings)
@@ -679,14 +683,20 @@ class WorkerThreadRuntimeCallStats final {
 // when it is destroyed.
 class V8_NODISCARD WorkerThreadRuntimeCallStatsScope final {
  public:
+  WorkerThreadRuntimeCallStatsScope() = default;
   explicit WorkerThreadRuntimeCallStatsScope(
       WorkerThreadRuntimeCallStats* off_thread_stats);
   ~WorkerThreadRuntimeCallStatsScope();
 
+  WorkerThreadRuntimeCallStatsScope(WorkerThreadRuntimeCallStatsScope&&) =
+      delete;
+  WorkerThreadRuntimeCallStatsScope(const WorkerThreadRuntimeCallStatsScope&) =
+      delete;
+
   RuntimeCallStats* Get() const { return table_; }
 
  private:
-  RuntimeCallStats* table_;
+  RuntimeCallStats* table_ = nullptr;
 };
 
 #define CHANGE_CURRENT_RUNTIME_COUNTER(runtime_call_stats, counter_id) \
@@ -708,6 +718,10 @@ class V8_NODISCARD RuntimeCallTimerScope {
  public:
   inline RuntimeCallTimerScope(Isolate* isolate,
                                RuntimeCallCounterId counter_id);
+  inline RuntimeCallTimerScope(LocalIsolate* isolate,
+                               RuntimeCallCounterId counter_id,
+                               RuntimeCallStats::CounterMode mode =
+                                   RuntimeCallStats::CounterMode::kExact);
   inline RuntimeCallTimerScope(RuntimeCallStats* stats,
                                RuntimeCallCounterId counter_id,
                                RuntimeCallStats::CounterMode mode =

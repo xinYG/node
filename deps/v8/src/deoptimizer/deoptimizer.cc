@@ -431,7 +431,7 @@ void Deoptimizer::DeoptimizeFunction(JSFunction function, Code code) {
   TimerEventScope<TimerEventDeoptimizeCode> timer(isolate);
   TRACE_EVENT0("v8", "V8.DeoptimizeCode");
   function.ResetIfCodeFlushed();
-  if (code.is_null()) code = function.code();
+  if (code.is_null()) code = FromCodeT(function.code());
 
   if (CodeKindCanDeoptimize(code.kind())) {
     // Mark the code for deoptimization and unlink any functions that also
@@ -656,7 +656,7 @@ Builtin Deoptimizer::GetDeoptimizationEntry(DeoptimizeKind kind) {
 
 bool Deoptimizer::IsDeoptimizationEntry(Isolate* isolate, Address addr,
                                         DeoptimizeKind* type_out) {
-  Builtin builtin = InstructionStream::TryLookupCode(isolate, addr);
+  Builtin builtin = OffHeapInstructionStream::TryLookupCode(isolate, addr);
   if (!Builtins::IsBuiltinId(builtin)) return false;
 
   switch (builtin) {
@@ -784,7 +784,7 @@ void Deoptimizer::TraceMarkForDeoptimization(Code code, const char* reason) {
   if (!FLAG_log_deopt) return;
   no_gc.Release();
   {
-    HandleScope scope(isolate);
+    HandleScope handle_scope(isolate);
     PROFILE(
         isolate,
         CodeDependencyChangeEvent(
@@ -1540,7 +1540,6 @@ void Deoptimizer::DoComputeConstructStubFrame(TranslatedFrame* translated_frame,
 
   // Set the continuation for the topmost frame.
   if (is_topmost) {
-    Builtins* builtins = isolate_->builtins();
     DCHECK_EQ(DeoptimizeKind::kLazy, deopt_kind_);
     Code continuation = builtins->code(Builtin::kNotifyDeoptimized);
     output_frame->SetContinuation(

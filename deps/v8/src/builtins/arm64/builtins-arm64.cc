@@ -75,7 +75,7 @@ static void GenerateTailCallToReturnedCode(MacroAssembler* masm,
   }
 
   static_assert(kJavaScriptCallCodeStartRegister == x2, "ABI mismatch");
-  __ JumpCodeObject(x2);
+  __ JumpCodeTObject(x2);
 }
 
 namespace {
@@ -253,8 +253,10 @@ void Builtins::Generate_JSConstructStubGeneric(MacroAssembler* masm) {
       x4, FieldMemOperand(x1, JSFunction::kSharedFunctionInfoOffset));
   __ Ldr(w4, FieldMemOperand(x4, SharedFunctionInfo::kFlagsOffset));
   __ DecodeField<SharedFunctionInfo::FunctionKindBits>(w4);
-  __ JumpIfIsInRange(w4, kDefaultDerivedConstructor, kDerivedConstructor,
-                     &not_create_implicit_receiver);
+  __ JumpIfIsInRange(
+      w4, static_cast<uint32_t>(FunctionKind::kDefaultDerivedConstructor),
+      static_cast<uint32_t>(FunctionKind::kDerivedConstructor),
+      &not_create_implicit_receiver);
 
   // If not derived class constructor: Allocate the new receiver object.
   __ IncrementCounter(masm->isolate()->counters()->constructed_objects(), 1, x4,
@@ -430,19 +432,19 @@ void Builtins::Generate_ConstructedNonConstructable(MacroAssembler* masm) {
   __ Unreachable();
 }
 
-static void AssertCodeIsBaselineAllowClobber(MacroAssembler* masm,
-                                             Register code, Register scratch) {
+static void AssertCodeTIsBaselineAllowClobber(MacroAssembler* masm,
+                                              Register code, Register scratch) {
   // Verify that the code kind is baseline code via the CodeKind.
-  __ Ldr(scratch, FieldMemOperand(code, Code::kFlagsOffset));
-  __ DecodeField<Code::KindField>(scratch);
+  __ Ldr(scratch, FieldMemOperand(code, CodeT::kFlagsOffset));
+  __ DecodeField<CodeT::KindField>(scratch);
   __ Cmp(scratch, Operand(static_cast<int>(CodeKind::BASELINE)));
   __ Assert(eq, AbortReason::kExpectedBaselineData);
 }
 
-static void AssertCodeIsBaseline(MacroAssembler* masm, Register code,
-                                 Register scratch) {
+static void AssertCodeTIsBaseline(MacroAssembler* masm, Register code,
+                                  Register scratch) {
   DCHECK(!AreAliased(code, scratch));
-  return AssertCodeIsBaselineAllowClobber(masm, code, scratch);
+  return AssertCodeTIsBaselineAllowClobber(masm, code, scratch);
 }
 
 // TODO(v8:11429): Add a path for "not_compiled" and unify the two uses under
@@ -457,12 +459,7 @@ static void GetSharedFunctionInfoBytecodeOrBaseline(MacroAssembler* masm,
   if (FLAG_debug_code) {
     Label not_baseline;
     __ B(ne, &not_baseline);
-    if (V8_EXTERNAL_CODE_SPACE_BOOL) {
-      __ LoadCodeDataContainerCodeNonBuiltin(scratch1, sfi_data);
-      AssertCodeIsBaselineAllowClobber(masm, scratch1, scratch1);
-    } else {
-      AssertCodeIsBaseline(masm, sfi_data, scratch1);
-    }
+    AssertCodeTIsBaseline(masm, sfi_data, scratch1);
     __ B(eq, is_baseline);
     __ Bind(&not_baseline);
   } else {
@@ -1083,7 +1080,8 @@ static void TailCallRuntimeIfMarkerEquals(MacroAssembler* masm,
                                           Runtime::FunctionId function_id) {
   ASM_CODE_COMMENT(masm);
   Label no_match;
-  __ CompareAndBranch(actual_marker, Operand(expected_marker), ne, &no_match);
+  __ CompareAndBranch(actual_marker, Operand(static_cast<int>(expected_marker)),
+                      ne, &no_match);
   GenerateTailCallToReturnedCode(masm, function_id);
   __ bind(&no_match);
 }
@@ -1891,10 +1889,12 @@ static void Generate_InterpreterEnterBytecode(MacroAssembler* masm) {
   __ Ldr(kJavaScriptCallCodeStartRegister,
          MemOperand(kInterpreterDispatchTableRegister, x1));
 
-  UseScratchRegisterScope temps(masm);
-  temps.Exclude(x17);
-  __ Mov(x17, kJavaScriptCallCodeStartRegister);
-  __ Jump(x17);
+  {
+    UseScratchRegisterScope temps(masm);
+    temps.Exclude(x17);
+    __ Mov(x17, kJavaScriptCallCodeStartRegister);
+    __ Jump(x17);
+  }
 
   __ Bind(&return_from_bytecode_dispatch);
 
@@ -1932,8 +1932,12 @@ static void Generate_InterpreterEnterBytecode(MacroAssembler* masm) {
 
   __ Bind(&trampoline_loaded);
 
-  __ Add(x17, x1, Operand(interpreter_entry_return_pc_offset.value()));
-  __ Br(x17);
+  {
+    UseScratchRegisterScope temps(masm);
+    temps.Exclude(x17);
+    __ Add(x17, x1, Operand(interpreter_entry_return_pc_offset.value()));
+    __ Br(x17);
+  }
 }
 
 void Builtins::Generate_InterpreterEnterAtNextBytecode(MacroAssembler* masm) {
@@ -2648,8 +2652,12 @@ void Builtins::Generate_CallFunction(MacroAssembler* masm,
   // -----------------------------------
   __ AssertFunction(x1);
 
+  Label class_constructor;
   __ LoadTaggedPointerField(
       x2, FieldMemOperand(x1, JSFunction::kSharedFunctionInfoOffset));
+  __ Ldr(w3, FieldMemOperand(x2, SharedFunctionInfo::kFlagsOffset));
+  __ TestAndBranchIfAnySet(w3, SharedFunctionInfo::IsClassConstructorBit::kMask,
+                           &class_constructor);
 
   // Enter the context of the function; ToObject has to run in the function
   // context, and we also need to take the global proxy from the function
@@ -2725,6 +2733,15 @@ void Builtins::Generate_CallFunction(MacroAssembler* masm,
   __ Ldrh(x2,
           FieldMemOperand(x2, SharedFunctionInfo::kFormalParameterCountOffset));
   __ InvokeFunctionCode(x1, no_reg, x2, x0, InvokeType::kJump);
+
+  // The function is a "classConstructor", need to raise an exception.
+  __ Bind(&class_constructor);
+  {
+    FrameScope frame(masm, StackFrame::INTERNAL);
+    __ PushArgument(x1);
+    __ CallRuntime(Runtime::kThrowConstructorNonCallableError);
+    __ Unreachable();
+  }
 }
 
 namespace {
@@ -3172,6 +3189,11 @@ void Builtins::Generate_WasmDebugBreak(MacroAssembler* masm) {
 
 void Builtins::Generate_GenericJSToWasmWrapper(MacroAssembler* masm) {
   // TODO(v8:10701): Implement for this platform.
+  __ Trap();
+}
+
+void Builtins::Generate_WasmReturnPromiseOnSuspend(MacroAssembler* masm) {
+  // TODO(v8:12191): Implement for this platform.
   __ Trap();
 }
 
@@ -4169,11 +4191,11 @@ void Generate_BaselineOrInterpreterEntry(MacroAssembler* masm,
     __ Assert(eq, AbortReason::kExpectedBaselineData);
   }
 
+  if (FLAG_debug_code) {
+    AssertCodeTIsBaseline(masm, code_obj, x3);
+  }
   if (V8_EXTERNAL_CODE_SPACE_BOOL) {
     __ LoadCodeDataContainerCodeNonBuiltin(code_obj, code_obj);
-  }
-  if (FLAG_debug_code) {
-    AssertCodeIsBaseline(masm, code_obj, x3);
   }
 
   // Load the feedback vector.

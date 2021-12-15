@@ -145,7 +145,7 @@ AllocationResult LocalAllocationBuffer::AllocateRawAligned(
   HeapObject object =
       HeapObject::FromAddress(allocation_info_.IncrementTop(aligned_size));
   if (filler_size > 0) {
-    return Heap::PrecedeWithFiller(ReadOnlyRoots(heap_), object, filler_size);
+    return heap_->PrecedeWithFiller(object, filler_size);
   }
 
   return AllocationResult(object);
@@ -173,6 +173,24 @@ bool LocalAllocationBuffer::TryFreeLast(HeapObject object, int object_size) {
     return allocation_info_.DecrementTopIfAdjacent(object_address, object_size);
   }
   return false;
+}
+
+bool MemoryChunkIterator::HasNext() {
+  if (current_chunk_) return true;
+
+  while (space_iterator_.HasNext()) {
+    Space* space = space_iterator_.Next();
+    current_chunk_ = space->first_page();
+    if (current_chunk_) return true;
+  }
+
+  return false;
+}
+
+MemoryChunk* MemoryChunkIterator::Next() {
+  MemoryChunk* chunk = current_chunk_;
+  current_chunk_ = chunk->list_node().next();
+  return chunk;
 }
 
 }  // namespace internal

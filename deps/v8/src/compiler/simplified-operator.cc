@@ -91,6 +91,9 @@ std::ostream& operator<<(std::ostream& os, FieldAccess const& access) {
   if (access.is_store_in_literal) {
     os << " (store in literal)";
   }
+  if (access.maybe_initializing_or_transitioning_store) {
+    os << " (initializing or transitioning store)";
+  }
   os << "]";
   return os;
 }
@@ -160,7 +163,9 @@ const ElementAccess& ElementAccessOf(const Operator* op) {
 const ObjectAccess& ObjectAccessOf(const Operator* op) {
   DCHECK_NOT_NULL(op);
   DCHECK(op->opcode() == IrOpcode::kLoadFromObject ||
-         op->opcode() == IrOpcode::kStoreToObject);
+         op->opcode() == IrOpcode::kLoadImmutableFromObject ||
+         op->opcode() == IrOpcode::kStoreToObject ||
+         op->opcode() == IrOpcode::kInitializeImmutableInObject);
   return OpParameter<ObjectAccess>(op);
 }
 
@@ -592,25 +597,26 @@ NumberOperationParameters const& NumberOperationParametersOf(
   return OpParameter<NumberOperationParameters>(op);
 }
 
-bool operator==(SpeculativeBigIntAsUintNParameters const& lhs,
-                SpeculativeBigIntAsUintNParameters const& rhs) {
+bool operator==(SpeculativeBigIntAsNParameters const& lhs,
+                SpeculativeBigIntAsNParameters const& rhs) {
   return lhs.bits() == rhs.bits() && lhs.feedback() == rhs.feedback();
 }
 
-size_t hash_value(SpeculativeBigIntAsUintNParameters const& p) {
+size_t hash_value(SpeculativeBigIntAsNParameters const& p) {
   FeedbackSource::Hash feedback_hash;
   return base::hash_combine(p.bits(), feedback_hash(p.feedback()));
 }
 
 std::ostream& operator<<(std::ostream& os,
-                         SpeculativeBigIntAsUintNParameters const& p) {
+                         SpeculativeBigIntAsNParameters const& p) {
   return os << p.bits() << ", " << p.feedback();
 }
 
-SpeculativeBigIntAsUintNParameters const& SpeculativeBigIntAsUintNParametersOf(
+SpeculativeBigIntAsNParameters const& SpeculativeBigIntAsNParametersOf(
     Operator const* op) {
-  DCHECK_EQ(IrOpcode::kSpeculativeBigIntAsUintN, op->opcode());
-  return OpParameter<SpeculativeBigIntAsUintNParameters>(op);
+  DCHECK(op->opcode() == IrOpcode::kSpeculativeBigIntAsUintN ||
+         op->opcode() == IrOpcode::kSpeculativeBigIntAsIntN);
+  return OpParameter<SpeculativeBigIntAsNParameters>(op);
 }
 
 size_t hash_value(AllocateParameters info) {
@@ -780,7 +786,8 @@ bool operator==(CheckMinusZeroParameters const& lhs,
   V(ChangeUint64ToTagged, Operator::kNoProperties, 1, 0)         \
   V(ChangeTaggedToBit, Operator::kNoProperties, 1, 0)            \
   V(ChangeBitToTagged, Operator::kNoProperties, 1, 0)            \
-  V(TruncateBigIntToUint64, Operator::kNoProperties, 1, 0)       \
+  V(TruncateBigIntToWord64, Operator::kNoProperties, 1, 0)       \
+  V(ChangeInt64ToBigInt, Operator::kNoProperties, 1, 0)          \
   V(ChangeUint64ToBigInt, Operator::kNoProperties, 1, 0)         \
   V(TruncateTaggedToBit, Operator::kNoProperties, 1, 0)          \
   V(TruncateTaggedPointerToBit, Operator::kNoProperties, 1, 0)   \
@@ -1293,14 +1300,24 @@ const Operator* SimplifiedOperatorBuilder::RuntimeAbort(AbortReason reason) {
       static_cast<int>(reason));                // parameter
 }
 
+const Operator* SimplifiedOperatorBuilder::SpeculativeBigIntAsIntN(
+    int bits, const FeedbackSource& feedback) {
+  CHECK(0 <= bits && bits <= 64);
+
+  return zone()->New<Operator1<SpeculativeBigIntAsNParameters>>(
+      IrOpcode::kSpeculativeBigIntAsIntN, Operator::kNoProperties,
+      "SpeculativeBigIntAsIntN", 1, 1, 1, 1, 1, 0,
+      SpeculativeBigIntAsNParameters(bits, feedback));
+}
+
 const Operator* SimplifiedOperatorBuilder::SpeculativeBigIntAsUintN(
     int bits, const FeedbackSource& feedback) {
   CHECK(0 <= bits && bits <= 64);
 
-  return zone()->New<Operator1<SpeculativeBigIntAsUintNParameters>>(
+  return zone()->New<Operator1<SpeculativeBigIntAsNParameters>>(
       IrOpcode::kSpeculativeBigIntAsUintN, Operator::kNoProperties,
       "SpeculativeBigIntAsUintN", 1, 1, 1, 1, 1, 0,
-      SpeculativeBigIntAsUintNParameters(bits, feedback));
+      SpeculativeBigIntAsNParameters(bits, feedback));
 }
 
 const Operator* SimplifiedOperatorBuilder::UpdateInterruptBudget(int delta) {
@@ -1866,16 +1883,17 @@ const Operator* SimplifiedOperatorBuilder::SpeculativeNumberEqual(
   UNREACHABLE();
 }
 
-#define ACCESS_OP_LIST(V)                                                \
-  V(LoadField, FieldAccess, Operator::kNoWrite, 1, 1, 1)                 \
-  V(StoreField, FieldAccess, Operator::kNoRead, 2, 1, 0)                 \
-  V(LoadElement, ElementAccess, Operator::kNoWrite, 2, 1, 1)             \
-  V(StoreElement, ElementAccess, Operator::kNoRead, 3, 1, 0)             \
-  V(LoadTypedElement, ExternalArrayType, Operator::kNoWrite, 4, 1, 1)    \
-  V(LoadFromObject, ObjectAccess, Operator::kNoWrite, 2, 1, 1)           \
-  V(StoreTypedElement, ExternalArrayType, Operator::kNoRead, 5, 1, 0)    \
-  V(StoreToObject, ObjectAccess, Operator::kNoRead, 3, 1, 0)             \
-  V(LoadDataViewElement, ExternalArrayType, Operator::kNoWrite, 4, 1, 1) \
+#define ACCESS_OP_LIST(V)                                                  \
+  V(LoadField, FieldAccess, Operator::kNoWrite, 1, 1, 1)                   \
+  V(LoadElement, ElementAccess, Operator::kNoWrite, 2, 1, 1)               \
+  V(StoreElement, ElementAccess, Operator::kNoRead, 3, 1, 0)               \
+  V(LoadTypedElement, ExternalArrayType, Operator::kNoWrite, 4, 1, 1)      \
+  V(StoreTypedElement, ExternalArrayType, Operator::kNoRead, 5, 1, 0)      \
+  V(LoadFromObject, ObjectAccess, Operator::kNoWrite, 2, 1, 1)             \
+  V(StoreToObject, ObjectAccess, Operator::kNoRead, 3, 1, 0)               \
+  V(LoadImmutableFromObject, ObjectAccess, Operator::kNoWrite, 2, 1, 1)    \
+  V(InitializeImmutableInObject, ObjectAccess, Operator::kNoRead, 3, 1, 0) \
+  V(LoadDataViewElement, ExternalArrayType, Operator::kNoWrite, 4, 1, 1)   \
   V(StoreDataViewElement, ExternalArrayType, Operator::kNoRead, 5, 1, 0)
 
 #define ACCESS(Name, Type, properties, value_input_count, control_input_count, \
@@ -1889,6 +1907,17 @@ const Operator* SimplifiedOperatorBuilder::SpeculativeNumberEqual(
   }
 ACCESS_OP_LIST(ACCESS)
 #undef ACCESS
+
+const Operator* SimplifiedOperatorBuilder::StoreField(
+    const FieldAccess& access, bool maybe_initializing_or_transitioning) {
+  FieldAccess store_access = access;
+  store_access.maybe_initializing_or_transitioning_store =
+      maybe_initializing_or_transitioning;
+  return zone()->New<Operator1<FieldAccess>>(
+      IrOpcode::kStoreField,
+      Operator::kNoDeopt | Operator::kNoThrow | Operator::kNoRead, "StoreField",
+      2, 1, 1, 0, 1, 0, store_access);
+}
 
 const Operator* SimplifiedOperatorBuilder::LoadMessage() {
   return zone()->New<Operator>(IrOpcode::kLoadMessage, Operator::kEliminatable,

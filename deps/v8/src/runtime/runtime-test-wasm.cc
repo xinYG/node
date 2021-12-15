@@ -209,13 +209,12 @@ RUNTIME_FUNCTION(Runtime_WasmTraceExit) {
         break;
       }
       case wasm::kF32: {
-        float_t value = base::ReadUnalignedValue<float_t>(value_addr_smi.ptr());
+        float value = base::ReadUnalignedValue<float>(value_addr_smi.ptr());
         PrintF(" -> %f\n", value);
         break;
       }
       case wasm::kF64: {
-        double_t value =
-            base::ReadUnalignedValue<double_t>(value_addr_smi.ptr());
+        double value = base::ReadUnalignedValue<double>(value_addr_smi.ptr());
         PrintF(" -> %f\n", value);
         break;
       }
@@ -269,7 +268,7 @@ RUNTIME_FUNCTION(Runtime_IsWasmCode) {
   SealHandleScope shs(isolate);
   DCHECK_EQ(1, args.length());
   CONVERT_ARG_CHECKED(JSFunction, function, 0);
-  Code code = function.code();
+  CodeT code = function.code();
   bool is_js_to_wasm = code.kind() == CodeKind::JS_TO_WASM_FUNCTION ||
                        (code.builtin_id() == Builtin::kGenericJSToWasmWrapper);
   return isolate->heap()->ToBoolean(is_js_to_wasm);

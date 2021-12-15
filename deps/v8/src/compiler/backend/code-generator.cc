@@ -491,22 +491,41 @@ void CodeGenerator::AssembleCode() {
 }
 
 void CodeGenerator::AssembleArchBinarySearchSwitchRange(
-    Register input, RpoNumber def_block, std::pair<int32_t, Label*>* begin,
-    std::pair<int32_t, Label*>* end) {
+    Register input, RpoNumber def_block, std::pair<int32_t, RpoNumber>* begin,
+    std::pair<int32_t, RpoNumber>* end, int32_t min_possible_value,
+    int32_t max_possible_value) {
   if (end - begin < kBinarySearchSwitchMinimalCases) {
     while (begin != end) {
-      tasm()->JumpIfEqual(input, begin->first, begin->second);
+      if (min_possible_value == begin->first) {
+        if (max_possible_value == begin->first) {
+          // Only one value is possible, so we can jump to it unconditionally.
+          DCHECK_EQ(begin + 1, end);
+          def_block = begin->second;
+          break;
+        }
+        // After emitting the branch for this case, the minimum possible value
+        // is increased.
+        ++min_possible_value;
+      }
+      tasm()->JumpIfEqual(input, begin->first, GetLabel(begin->second));
       ++begin;
     }
-    AssembleArchJump(def_block);
+    AssembleArchJumpRegardlessOfAssemblyOrder(def_block);
     return;
   }
   auto middle = begin + (end - begin) / 2;
   Label less_label;
   tasm()->JumpIfLessThan(input, middle->first, &less_label);
-  AssembleArchBinarySearchSwitchRange(input, def_block, middle, end);
+  AssembleArchBinarySearchSwitchRange(input, def_block, middle, end,
+                                      middle->first, max_possible_value);
   tasm()->bind(&less_label);
-  AssembleArchBinarySearchSwitchRange(input, def_block, begin, middle);
+  AssembleArchBinarySearchSwitchRange(input, def_block, begin, middle,
+                                      min_possible_value, middle->first - 1);
+}
+
+void CodeGenerator::AssembleArchJump(RpoNumber target) {
+  if (!IsNextInAssemblyOrder(target))
+    AssembleArchJumpRegardlessOfAssemblyOrder(target);
 }
 
 base::OwnedVector<byte> CodeGenerator::GetSourcePositionTable() {
@@ -980,8 +999,9 @@ Handle<DeoptimizationData> CodeGenerator::GenerateDeoptimizationData() {
     data->SetSharedFunctionInfo(Smi::zero());
   }
 
-  Handle<FixedArray> literals = isolate()->factory()->NewFixedArray(
-      static_cast<int>(deoptimization_literals_.size()), AllocationType::kOld);
+  Handle<DeoptimizationLiteralArray> literals =
+      isolate()->factory()->NewDeoptimizationLiteralArray(
+          static_cast<int>(deoptimization_literals_.size()));
   for (unsigned i = 0; i < deoptimization_literals_.size(); i++) {
     Handle<Object> object = deoptimization_literals_[i].Reify(isolate());
     CHECK(!object.is_null());
@@ -1213,10 +1233,10 @@ DeoptimizationExit* CodeGenerator::BuildTranslation(
   }
   if (immediate_args_count != 0) {
     auto immediate_args = zone()->New<ZoneVector<ImmediateOperand*>>(zone());
-    InstructionOperandIterator iter(
+    InstructionOperandIterator imm_iter(
         instr, frame_state_offset - immediate_args_count - 1);
     for (size_t i = 0; i < immediate_args_count; i++) {
-      immediate_args->emplace_back(ImmediateOperand::cast(iter.Advance()));
+      immediate_args->emplace_back(ImmediateOperand::cast(imm_iter.Advance()));
     }
     exit->set_immediate_args(immediate_args);
   }

@@ -183,6 +183,7 @@ void AsyncBuiltinsAssembler::InitAwaitPromise(
   Goto(&do_nothing);
   BIND(&not_debugging);
 
+#ifdef V8_ENABLE_JAVASCRIPT_PROMISE_HOOKS
   // This call to NewJSPromise is to keep behaviour parity with what happens
   // in Runtime::kAwaitPromisesInit above if native hooks are set. It will
   // create a throwaway promise that will trigger an init event and will get
@@ -191,6 +192,7 @@ void AsyncBuiltinsAssembler::InitAwaitPromise(
          &do_nothing);
   BIND(&if_promise_hook);
   *var_throwaway = NewJSPromise(context, promise);
+#endif  // V8_ENABLE_JAVASCRIPT_PROMISE_HOOKS
   Goto(&do_nothing);
   BIND(&do_nothing);
 }
@@ -283,9 +285,8 @@ void AsyncBuiltinsAssembler::InitializeNativeClosure(
   // which almost doubles the size of `await` builtins (unnecessarily).
   TNode<Smi> builtin_id = LoadObjectField<Smi>(
       shared_info, SharedFunctionInfo::kFunctionDataOffset);
-  TNode<Code> code = LoadBuiltin(builtin_id);
-  StoreObjectFieldNoWriteBarrier(function, JSFunction::kCodeOffset,
-                                 ToCodeT(code));
+  TNode<CodeT> code = LoadBuiltin(builtin_id);
+  StoreObjectFieldNoWriteBarrier(function, JSFunction::kCodeOffset, code);
 }
 
 TNode<JSFunction> AsyncBuiltinsAssembler::CreateUnwrapClosure(

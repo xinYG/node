@@ -50,6 +50,7 @@ enum class FeedbackSlotKind : uint8_t {
   kStoreGlobalStrict,
   kStoreNamedStrict,
   kStoreOwnNamed,
+  kDefineOwnKeyed,
   kStoreKeyedStrict,
   kStoreInArrayLiteral,
   kBinaryOp,
@@ -102,6 +103,14 @@ inline bool IsStoreOwnICKind(FeedbackSlotKind kind) {
   return kind == FeedbackSlotKind::kStoreOwnNamed;
 }
 
+inline bool IsKeyedDefineOwnICKind(FeedbackSlotKind kind) {
+  return kind == FeedbackSlotKind::kDefineOwnKeyed;
+}
+
+inline bool IsDefineOwnICKind(FeedbackSlotKind kind) {
+  return IsKeyedDefineOwnICKind(kind);
+}
+
 inline bool IsStoreDataPropertyInLiteralKind(FeedbackSlotKind kind) {
   return kind == FeedbackSlotKind::kStoreDataPropertyInLiteral;
 }
@@ -136,7 +145,8 @@ inline TypeofMode GetTypeofModeFromSlotKind(FeedbackSlotKind kind) {
 
 inline LanguageMode GetLanguageModeFromSlotKind(FeedbackSlotKind kind) {
   DCHECK(IsStoreICKind(kind) || IsStoreOwnICKind(kind) ||
-         IsStoreGlobalICKind(kind) || IsKeyedStoreICKind(kind));
+         IsStoreGlobalICKind(kind) || IsKeyedStoreICKind(kind) ||
+         IsDefineOwnICKind(kind));
   STATIC_ASSERT(FeedbackSlotKind::kStoreGlobalSloppy <=
                 FeedbackSlotKind::kLastSloppyKind);
   STATIC_ASSERT(FeedbackSlotKind::kStoreKeyedSloppy <=
@@ -226,7 +236,7 @@ class FeedbackVector
   DECL_RELAXED_INT32_ACCESSORS(invocation_count)
   inline void clear_invocation_count(RelaxedStoreTag tag);
 
-  inline Code optimized_code() const;
+  inline CodeT optimized_code() const;
   inline bool has_optimized_code() const;
   inline bool has_optimization_marker() const;
   inline OptimizationMarker optimization_marker() const;
@@ -235,8 +245,8 @@ class FeedbackVector
   void EvictOptimizedCodeMarkedForDeoptimization(FeedbackCell feedback_cell,
                                                  SharedFunctionInfo shared,
                                                  const char* reason);
-  static void SetOptimizedCode(Handle<FeedbackVector> vector, Handle<Code> code,
-                               FeedbackCell feedback_cell);
+  static void SetOptimizedCode(Handle<FeedbackVector> vector,
+                               Handle<CodeT> code, FeedbackCell feedback_cell);
   void SetOptimizationMarker(OptimizationMarker marker);
   void ClearOptimizationTier(FeedbackCell feedback_cell);
   void InitializeOptimizationState();
@@ -422,6 +432,12 @@ class V8_EXPORT_PRIVATE FeedbackVectorSpec {
 
   FeedbackSlot AddStoreOwnICSlot() {
     return AddSlot(FeedbackSlotKind::kStoreOwnNamed);
+  }
+
+  // Identical to StoreOwnKeyed, but will throw if a private field already
+  // exists.
+  FeedbackSlot AddKeyedDefineOwnICSlot() {
+    return AddSlot(FeedbackSlotKind::kDefineOwnKeyed);
   }
 
   FeedbackSlot AddStoreGlobalICSlot(LanguageMode language_mode) {
@@ -731,9 +747,13 @@ class V8_EXPORT_PRIVATE FeedbackNexus final {
   }
 
   InlineCacheState ic_state() const;
-  bool IsUninitialized() const { return ic_state() == UNINITIALIZED; }
-  bool IsMegamorphic() const { return ic_state() == MEGAMORPHIC; }
-  bool IsGeneric() const { return ic_state() == GENERIC; }
+  bool IsUninitialized() const {
+    return ic_state() == InlineCacheState::UNINITIALIZED;
+  }
+  bool IsMegamorphic() const {
+    return ic_state() == InlineCacheState::MEGAMORPHIC;
+  }
+  bool IsGeneric() const { return ic_state() == InlineCacheState::GENERIC; }
 
   void Print(std::ostream& os);
 
@@ -757,7 +777,7 @@ class V8_EXPORT_PRIVATE FeedbackNexus final {
 
   bool IsCleared() const {
     InlineCacheState state = ic_state();
-    return !FLAG_use_ic || state == UNINITIALIZED;
+    return !FLAG_use_ic || state == InlineCacheState::UNINITIALIZED;
   }
 
   // Clear() returns true if the state of the underlying vector was changed.

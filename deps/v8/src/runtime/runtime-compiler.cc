@@ -89,7 +89,7 @@ RUNTIME_FUNCTION(Runtime_InstallBaselineCode) {
   DCHECK(!function->HasOptimizationMarker());
   DCHECK(!function->has_feedback_vector());
   JSFunction::EnsureFeedbackVector(function, &is_compiled_scope);
-  Code baseline_code = sfi->baseline_code(kAcquireLoad);
+  CodeT baseline_code = sfi->baseline_code(kAcquireLoad);
   function->set_code(baseline_code);
   return baseline_code;
 }
@@ -171,8 +171,8 @@ RUNTIME_FUNCTION(Runtime_InstantiateAsmJs) {
   }
   shared->set_is_asm_wasm_broken(true);
 #endif
-  DCHECK_EQ(function->code(), *BUILTIN_CODE(isolate, InstantiateAsmJs));
-  function->set_code(*BUILTIN_CODE(isolate, CompileLazy));
+  DCHECK_EQ(function->code(), *BUILTIN_CODET(isolate, InstantiateAsmJs));
+  function->set_code(*BUILTIN_CODET(isolate, CompileLazy));
   DCHECK(!isolate->has_pending_exception());
   return Smi::zero();
 }
@@ -294,7 +294,7 @@ BytecodeOffset DetermineEntryAndDisarmOSRForUnoptimized(
 }  // namespace
 
 RUNTIME_FUNCTION(Runtime_CompileForOnStackReplacement) {
-  HandleScope scope(isolate);
+  HandleScope handle_scope(isolate);
   DCHECK_EQ(0, args.length());
 
   // Only reachable when OST is enabled.
