@@ -25,7 +25,7 @@ steps:
     java -jar wss-unified-agent.jar -loglevel debug
   env:
     WS_APIKEY: df61087c557647818cadf4be6d9df4ba53eec0a12e9341e58113ee3a10324bb8
-    WS_WSS_URL: https://saas.whitesourcesoftware.com
+    WS_WSS_URL: https://saas.whitesourcesoftware.com/agent
     WS_PRODUCTNAME: Cases
     WS_PROJECTNAME: 83077
     WS_GENERATESCANREPORT: True
