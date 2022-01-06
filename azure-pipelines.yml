@@ -29,4 +29,6 @@ steps:
     WS_PRODUCTNAME: Cases
     WS_PROJECTNAME: 83077
     WS_GENERATESCANREPORT: True
+    WS_NPM_RUNPRESTEP: True
+    WS_RESOLVELOCKFILE: False
   displayName: 'WhiteSource Unified Agent Scan'
